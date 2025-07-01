@@ -522,7 +522,7 @@ export default function FieldCard({
             <span>Auto</span>
           </button>
 
-          {/* Settings Button (Future feature) */}
+          {/* Settings Button (Future f eature) */}
           <button
             className="px-3 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors flex items-center justify-center space-x-1"
             title="Valve settings (Coming soon)"
