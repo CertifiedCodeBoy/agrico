@@ -13,6 +13,8 @@ import {
   MessageCircle,
   Send,
 } from "lucide-react";
+import { geminiService } from "../services/geminiService";
+import { AIService } from "../services/aiService";
 
 const cropTypes = [
   "Tomatoes",
@@ -40,14 +42,15 @@ export default function AddFieldModal({
     pumpStatus: "off",
   });
 
-  // Soil analysis data for first field
+  // Enhanced soil analysis data for first field
   const [soilAnalysis, setSoilAnalysis] = useState({
-    potassium: "",
-    phosphorus: "",
-    nitrogen: "",
     pH: "",
-    organicMatter: "",
+    bufferIndex: "",
+    nitrogen: "",
+    phosphorus: "",
+    potassium: "",
     soilTexture: "loam",
+    organicMatter: "",
   });
 
   const [currentStep, setCurrentStep] = useState(1); // 1: Soil Analysis, 2: AI Recommendations, 3: Field Details
@@ -58,9 +61,13 @@ export default function AddFieldModal({
     health: "good",
     recommendedWater: 2.5,
     explanation: "",
+    soilCondition: "good",
+    soilIssues: [],
+    recommendations: [],
   });
   const [isLoadingAI, setIsLoadingAI] = useState(false);
   const [aiError, setAiError] = useState("");
+  const [geminiStatus, setGeminiStatus] = useState("unknown");
 
   // Chat system states
   const [chatMessages, setChatMessages] = useState([]);
@@ -87,62 +94,76 @@ export default function AddFieldModal({
     "silt",
   ];
 
-  // Get AI crop recommendations from Ollama
+  // Check Gemini connection when modal opens
+  useEffect(() => {
+    if (isOpen && isFirstField) {
+      checkGeminiConnection();
+    }
+  }, [isOpen, isFirstField]);
+
+  const checkGeminiConnection = async () => {
+    try {
+      const result = await geminiService.checkConnection();
+      setGeminiStatus(result.status);
+    } catch (error) {
+      console.error("Gemini connection check failed:", error);
+      setGeminiStatus("disconnected");
+    }
+  };
+
+  // Enhanced AI crop recommendations from Gemini with better soil analysis
   const getAICropRecommendations = async (soilData) => {
     setIsLoadingAI(true);
     setAiError("");
 
     try {
-      const prompt = `Based on the following soil analysis data, recommend suitable crops and provide analysis:
+      const prompt = `As an expert agricultural AI, analyze this comprehensive soil laboratory report and provide detailed crop recommendations for smart irrigation farming:
 
-Soil Analysis:
-- Potassium level: ${soilData.potassium} ppm  
-- Phosphorus level: ${soilData.phosphorus} ppm
-- Nitrogen level: ${soilData.nitrogen} ppm
-- pH level: ${soilData.pH}
-- Organic matter content: ${soilData.organicMatter}%
-- Soil texture: ${soilData.soilTexture}
+DETAILED SOIL LABORATORY ANALYSIS:
+• pH Level: ${soilData.pH} (Soil acidity/alkalinity - ideal range 6.0-7.0 for most vegetables)
+• Buffer Index: ${soilData.bufferIndex} (Determines lime requirements if pH is too low)
+• Nitrogen (N): ${soilData.nitrogen} ppm (Available nitrogen for plant growth)
+• Phosphorus (P): ${soilData.phosphorus} ppm (For root development and flowering)
+• Potassium (K): ${soilData.potassium} ppm (For plant health and disease resistance)
+• Soil Texture: ${soilData.soilTexture} (Affects drainage and water retention)
+• Organic Matter: ${soilData.organicMatter}% (Decomposed organic material)
 
-Please provide your response in this EXACT JSON format (take only format, data is just as an example) (you decide which crops, what water recommendation, and field health based on the analysis):
+Please analyze this soil data comprehensively and provide your response in this EXACT JSON format:
+
 {
-  "crops": ["crop 1", "crop 2", "crop 3", "crop 4"],
-  "explanation": "Based on your soil analysis, these crops are recommended because...",
-  "fieldHealth": "...",
-  "recommendedWater": integer value (eg, 2.8),
-  "waterExplanation": "The recommended water amount is based on soil texture and nutrient levels..."
+  "soilCondition": "excellent|good|fair|poor",
+  "fieldHealth": "excellent|good|fair|poor", 
+  "recommendedWater": 2.5,
+  "crops": ["Crop1", "Crop2", "Crop3", "Crop4", "Crop5", "Crop6", "Crop7", "Crop8"],
+  "explanation": "Based on your detailed soil analysis, these crops are specifically recommended because...",
+  "waterExplanation": "The recommended irrigation amount of X L/m² is calculated based on...",
+  "soilIssues": ["Issue1", "Issue2"] or [],
+  "recommendations": ["Recommendation1", "Recommendation2"]
 }
 
-Consider:
-1. pH compatibility with crops
-2. Nutrient requirements vs soil levels  
-3. Soil texture drainage needs
-4. Provide 8-12 crop recommendations
-5. Field health should be: excellent, good, fair, or poor
-6. Water recommendation in L/m² (typically 1.5-4.0)`;
+COMPREHENSIVE ANALYSIS CRITERIA:
+• pH compatibility with different crop tolerance ranges
+• NPK nutrient levels versus specific crop requirements
+• Soil texture drainage and water retention implications
+• Organic matter adequacy for soil health and nutrition
+• Buffer capacity for pH management and correction needs
+• Provide 6-10 specific crop recommendations ranked by suitability
+• Water recommendation in L/m² (typically 1.5-4.5 based on conditions)
+• Identify specific soil issues requiring farmer attention
+• Suggest practical, actionable improvement recommendations
 
-      const response = await fetch("http://localhost:11434/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "llama3.2",
-          prompt: prompt,
-          stream: false,
-        }),
-      });
+IRRIGATION FOCUS:
+Consider how each recommended crop performs with smart irrigation systems, water efficiency, and automated watering schedules. Factor in soil moisture retention based on texture and organic matter content.
 
-      if (!response.ok) {
-        throw new Error("Failed to connect to Ollama AI");
-      }
+Provide practical, scientifically-backed advice optimized for smart irrigation and precision agriculture.`;
 
-      const data = await response.json();
+      const result = await geminiService.generateResponse(prompt);
 
       // Parse the AI response to extract the JSON
       let aiAnalysis = {};
       try {
         // Try to extract JSON from the response
-        const jsonMatch = data.response.match(/\{[\s\S]*\}/);
+        const jsonMatch = result.response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           aiAnalysis = JSON.parse(jsonMatch[0]);
         } else {
@@ -155,100 +176,217 @@ Consider:
         }
 
         setAiRecommendations(aiAnalysis.crops || []);
-        setAiExplanation(aiAnalysis.explanation || "AI analysis completed.");
+        setAiExplanation(
+          aiAnalysis.explanation || "AI analysis completed successfully."
+        );
         setAiFieldAnalysis({
           health: aiAnalysis.fieldHealth || "good",
           recommendedWater: aiAnalysis.recommendedWater || 2.5,
           explanation:
             aiAnalysis.waterExplanation ||
-            "Standard irrigation recommendation.",
+            "Standard irrigation recommendation based on soil analysis.",
+          soilCondition: aiAnalysis.soilCondition || "good",
+          soilIssues: aiAnalysis.soilIssues || [],
+          recommendations: aiAnalysis.recommendations || [],
         });
 
         setCurrentStep(2);
       } catch (parseError) {
         console.error("Error parsing AI response:", parseError);
 
-        // Fallback parsing
-        const lines = data.response.split("\n").filter((line) => line.trim());
-        const crops = lines
-          .filter(
-            (line) =>
-              line.includes("Tomatoes") ||
-              line.includes("Wheat") ||
-              line.includes("Corn")
-          )
-          .map((line) => line.replace(/[^\w\s]/g, "").trim())
-          .filter((crop) => crop.length > 0)
-          .slice(0, 8);
-
-        setAiRecommendations(
-          crops.length > 0 ? crops : ["Tomatoes", "Lettuce", "Carrots", "Wheat"]
-        );
-        setAiExplanation(
-          "These crops are suitable for your soil conditions based on pH and nutrient levels."
-        );
+        // Enhanced fallback based on soil analysis
+        const fallbackAnalysis = analyzeSoilConditions(soilData);
+        setAiRecommendations(fallbackAnalysis.crops);
+        setAiExplanation(fallbackAnalysis.explanation);
         setAiFieldAnalysis({
-          health: "good",
-          recommendedWater: 2.5,
-          explanation:
-            "Standard irrigation recommendation based on soil analysis.",
+          health: fallbackAnalysis.health,
+          recommendedWater: fallbackAnalysis.water,
+          explanation: fallbackAnalysis.waterExplanation,
+          soilCondition: fallbackAnalysis.soilCondition,
+          soilIssues: fallbackAnalysis.soilIssues || [],
+          recommendations: fallbackAnalysis.recommendations || [],
         });
         setCurrentStep(2);
       }
     } catch (error) {
       console.error("AI recommendation error:", error);
-      setAiError(error.message);
+      setAiError(`Failed to get AI recommendations: ${error.message}`);
+
+      // Always show fallback analysis even on error
+      const fallbackAnalysis = analyzeSoilConditions(soilData);
+      setAiRecommendations(fallbackAnalysis.crops);
+      setAiExplanation(
+        "Using scientific fallback analysis. AI services temporarily unavailable."
+      );
+      setAiFieldAnalysis({
+        health: fallbackAnalysis.health,
+        recommendedWater: fallbackAnalysis.water,
+        explanation: fallbackAnalysis.waterExplanation,
+        soilCondition: fallbackAnalysis.soilCondition,
+        soilIssues: fallbackAnalysis.soilIssues || [],
+        recommendations: fallbackAnalysis.recommendations || [],
+      });
+      setCurrentStep(2); // Still proceed to recommendations step
     } finally {
       setIsLoadingAI(false);
     }
   };
 
-  // Chat with AI about specific crops
+  // Enhanced fallback soil analysis function with more comprehensive logic
+  const analyzeSoilConditions = (soilData) => {
+    const pH = parseFloat(soilData.pH);
+    const nitrogen = parseFloat(soilData.nitrogen);
+    const phosphorus = parseFloat(soilData.phosphorus);
+    const potassium = parseFloat(soilData.potassium);
+    const organicMatter = parseFloat(soilData.organicMatter);
+
+    let health = "good";
+    let soilCondition = "good";
+    let water = 2.5;
+    let crops = ["Tomatoes", "Lettuce", "Carrots", "Peppers"];
+    let soilIssues = [];
+    let recommendations = [];
+
+    // Comprehensive pH-based analysis
+    if (pH >= 6.0 && pH <= 7.0) {
+      health = "excellent";
+      soilCondition = "excellent";
+      crops = [
+        "Tomatoes",
+        "Lettuce",
+        "Carrots",
+        "Peppers",
+        "Broccoli",
+        "Spinach",
+        "Corn",
+        "Onions",
+      ];
+      water = 2.2;
+    } else if (pH >= 5.5 && pH <= 8.0) {
+      health = "good";
+      crops = ["Potatoes", "Carrots", "Lettuce", "Corn", "Soybeans"];
+      water = 2.5;
+    } else if (pH < 5.5) {
+      health = "fair";
+      soilCondition = "acidic";
+      crops = ["Potatoes", "Carrots", "Soybeans"];
+      water = 3.0;
+      soilIssues.push("Soil is too acidic (pH < 5.5)");
+      recommendations.push("Add lime to raise pH to 6.0-7.0 range");
+    } else {
+      health = "fair";
+      soilCondition = "alkaline";
+      crops = ["Corn", "Onions", "Lettuce"];
+      water = 2.8;
+      soilIssues.push("Soil is too alkaline (pH > 8.0)");
+      recommendations.push("Add sulfur or organic matter to lower pH");
+    }
+
+    // Nutrient level analysis
+    if (nitrogen < 20) {
+      soilIssues.push("Low nitrogen levels");
+      recommendations.push("Apply nitrogen fertilizer before planting");
+    }
+    if (phosphorus < 10) {
+      soilIssues.push("Low phosphorus levels");
+      recommendations.push("Add phosphorus fertilizer for root development");
+    }
+    if (potassium < 100) {
+      soilIssues.push("Low potassium levels");
+      recommendations.push("Apply potassium fertilizer for plant health");
+    }
+
+    // Organic matter analysis
+    if (organicMatter > 5.0) {
+      if (health !== "excellent") health = "good";
+      water = Math.max(1.8, water - 0.4);
+      recommendations.push("Excellent organic matter - maintain with compost");
+    } else if (organicMatter > 3.0) {
+      if (health === "fair") health = "good";
+      water = Math.max(2.0, water - 0.3);
+      recommendations.push(
+        "Good organic matter levels - continue organic practices"
+      );
+    } else {
+      soilIssues.push("Low organic matter content");
+      recommendations.push(
+        "Add compost or organic matter to improve soil structure"
+      );
+    }
+
+    // Soil texture adjustments
+    if (soilData.soilTexture.includes("clay")) {
+      water = Math.max(1.5, water - 0.5);
+      recommendations.push("Clay soil: Water less frequently but more deeply");
+    } else if (soilData.soilTexture.includes("sand")) {
+      water = water + 0.5;
+      recommendations.push(
+        "Sandy soil: Water more frequently with smaller amounts"
+      );
+    }
+
+    return {
+      health,
+      soilCondition,
+      water: Math.round(water * 10) / 10, // Round to 1 decimal
+      crops,
+      explanation: `Based on pH ${pH}, organic matter ${organicMatter}%, and NPK levels, these crops are scientifically matched to your soil conditions for optimal smart irrigation performance.`,
+      waterExplanation: `Recommended ${
+        Math.round(water * 10) / 10
+      }L/m² based on soil texture (${
+        soilData.soilTexture
+      }), organic matter content, and drainage characteristics.`,
+      soilIssues,
+      recommendations,
+    };
+  };
+
+  // Enhanced chat with AI about specific crops using Gemini
   const askAIAboutCrop = async (question) => {
     setIsChatLoading(true);
 
     try {
-      const prompt = `Based on the following soil analysis data, answer the farmer's question about crop suitability:
+      const prompt = `As an expert agricultural AI specializing in smart irrigation, answer this farmer's question based on their specific soil laboratory analysis:
 
-Soil Analysis:
-- Potassium level: ${soilAnalysis.potassium} ppm  
-- Phosphorus level: ${soilAnalysis.phosphorus} ppm
-- Nitrogen level: ${soilAnalysis.nitrogen} ppm
-- pH level: ${soilAnalysis.pH}
-- Organic matter content: ${soilAnalysis.organicMatter}%
-- Soil texture: ${soilAnalysis.soilTexture}
+FARMER'S SOIL LABORATORY DATA:
+• pH Level: ${soilAnalysis.pH} (${
+        parseFloat(soilAnalysis.pH) >= 6.0 && parseFloat(soilAnalysis.pH) <= 7.0
+          ? "IDEAL"
+          : parseFloat(soilAnalysis.pH) < 6.0
+          ? "ACIDIC"
+          : "ALKALINE"
+      })
+• Buffer Index: ${soilAnalysis.bufferIndex}
+• Nitrogen (N): ${soilAnalysis.nitrogen} ppm (${
+        parseFloat(soilAnalysis.nitrogen) >= 20 ? "ADEQUATE" : "LOW"
+      })
+• Phosphorus (P): ${soilAnalysis.phosphorus} ppm (${
+        parseFloat(soilAnalysis.phosphorus) >= 10 ? "ADEQUATE" : "LOW"
+      })
+• Potassium (K): ${soilAnalysis.potassium} ppm (${
+        parseFloat(soilAnalysis.potassium) >= 100 ? "ADEQUATE" : "LOW"
+      })
+• Soil Texture: ${soilAnalysis.soilTexture}
+• Organic Matter: ${soilAnalysis.organicMatter}% (${
+        parseFloat(soilAnalysis.organicMatter) >= 3 ? "GOOD" : "LOW"
+      })
 
-Farmer's Question: ${question}
+FARMER'S QUESTION: ${question}
 
-Please provide a detailed answer explaining:
-1. Whether the crop can be grown in these soil conditions
-2. Why it's suitable or not suitable
-3. Any specific recommendations or modifications needed
-4. Expected yield potential (high/medium/low)
+Provide a comprehensive, practical answer covering:
+1. Whether the specific crop can be successfully grown in these exact soil conditions
+2. Detailed explanation based on the soil data provided (pH tolerance, nutrient needs)
+3. Specific soil modifications needed (lime, fertilizer amounts, drainage improvements)
+4. Expected yield potential and smart irrigation requirements for this crop
+5. Specific care tips optimized for this soil type and automated watering systems
 
-Keep the response conversational and practical for a farmer.`;
+Keep the response conversational, scientifically accurate, and focused on practical smart farming solutions.`;
 
-      const response = await fetch("http://localhost:11434/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "llama3.2",
-          prompt: prompt,
-          stream: false,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to connect to AI");
-      }
-
-      const data = await response.json();
-      return data.response;
+      const result = await geminiService.generateResponse(prompt);
+      return result.response;
     } catch (error) {
       console.error("Chat AI error:", error);
-      return "I'm sorry, I'm having trouble connecting right now. Please try again.";
+      return "I'm having trouble connecting to the AI service right now. Please check your Gemini API configuration and try again. In the meantime, consider these general soil improvement practices:\n\n• Add organic matter for better water retention\n• Test soil pH regularly and adjust as needed\n• Ensure adequate NPK levels for your chosen crops\n• Consider soil texture when planning irrigation schedules";
     } finally {
       setIsChatLoading(false);
     }
@@ -387,7 +525,7 @@ Keep the response conversational and practical for a farmer.`;
     setCustomCropInput(value);
     setFormData((prev) => ({ ...prev, cropType: value }));
     if (errors.cropType) {
-      setErrors((prev) => ({ ...prev, [field]: "" }));
+      setErrors((prev) => ({ ...prev, cropType: "" }));
     }
   };
 
@@ -401,21 +539,24 @@ Keep the response conversational and practical for a farmer.`;
   const validateSoilAnalysis = () => {
     const newErrors = {};
 
-    if (!soilAnalysis.potassium || parseFloat(soilAnalysis.potassium) < 0) {
-      newErrors.potassium = "Potassium level is required";
-    }
-    if (!soilAnalysis.phosphorus || parseFloat(soilAnalysis.phosphorus) < 0) {
-      newErrors.phosphorus = "Phosphorus level is required";
-    }
-    if (!soilAnalysis.nitrogen || parseFloat(soilAnalysis.nitrogen) < 0) {
-      newErrors.nitrogen = "Nitrogen level is required";
-    }
     if (
       !soilAnalysis.pH ||
       parseFloat(soilAnalysis.pH) < 0 ||
       parseFloat(soilAnalysis.pH) > 14
     ) {
       newErrors.pH = "pH must be between 0-14";
+    }
+    if (!soilAnalysis.bufferIndex || parseFloat(soilAnalysis.bufferIndex) < 0) {
+      newErrors.bufferIndex = "Buffer index is required";
+    }
+    if (!soilAnalysis.nitrogen || parseFloat(soilAnalysis.nitrogen) < 0) {
+      newErrors.nitrogen = "Nitrogen level is required";
+    }
+    if (!soilAnalysis.phosphorus || parseFloat(soilAnalysis.phosphorus) < 0) {
+      newErrors.phosphorus = "Phosphorus level is required";
+    }
+    if (!soilAnalysis.potassium || parseFloat(soilAnalysis.potassium) < 0) {
+      newErrors.potassium = "Potassium level is required";
     }
     if (
       !soilAnalysis.organicMatter ||
@@ -475,12 +616,13 @@ Keep the response conversational and practical for a farmer.`;
       // Include soil analysis for first field (frontend metadata)
       ...(isFirstField && {
         soilAnalysis: {
-          potassium: parseFloat(soilAnalysis.potassium),
-          phosphorus: parseFloat(soilAnalysis.phosphorus),
-          nitrogen: parseFloat(soilAnalysis.nitrogen),
           pH: parseFloat(soilAnalysis.pH),
-          organicMatter: parseFloat(soilAnalysis.organicMatter),
+          bufferIndex: parseFloat(soilAnalysis.bufferIndex),
+          nitrogen: parseFloat(soilAnalysis.nitrogen),
+          phosphorus: parseFloat(soilAnalysis.phosphorus),
+          potassium: parseFloat(soilAnalysis.potassium),
           soilTexture: soilAnalysis.soilTexture,
+          organicMatter: parseFloat(soilAnalysis.organicMatter),
         },
         aiAnalysis: {
           recommendedCrops: aiRecommendations,
@@ -488,6 +630,9 @@ Keep the response conversational and practical for a farmer.`;
           fieldHealth: aiFieldAnalysis.health,
           waterRecommendation: aiFieldAnalysis.recommendedWater,
           waterExplanation: aiFieldAnalysis.explanation,
+          soilCondition: aiFieldAnalysis.soilCondition,
+          soilIssues: aiFieldAnalysis.soilIssues || [],
+          recommendations: aiFieldAnalysis.recommendations || [],
         },
       }),
     };
@@ -503,12 +648,13 @@ Keep the response conversational and practical for a farmer.`;
       pumpStatus: "off",
     });
     setSoilAnalysis({
-      potassium: "",
-      phosphorus: "",
-      nitrogen: "",
       pH: "",
-      organicMatter: "",
+      bufferIndex: "",
+      nitrogen: "",
+      phosphorus: "",
+      potassium: "",
       soilTexture: "loam",
+      organicMatter: "",
     });
     setCurrentStep(isFirstField ? 1 : 3);
     setErrors({});
@@ -518,6 +664,9 @@ Keep the response conversational and practical for a farmer.`;
       health: "good",
       recommendedWater: 2.5,
       explanation: "",
+      soilCondition: "good",
+      soilIssues: [],
+      recommendations: [],
     });
     setAiError("");
     setChatMessages([]);
@@ -556,7 +705,7 @@ Keep the response conversational and practical for a farmer.`;
             >
               <FlaskConical className="h-4 w-4" />
             </div>
-            <span className="ml-2 text-sm font-medium">Soil Analysis</span>
+            <span className="ml-2 text-sm font-medium">🧪 Soil Analysis</span>
           </div>
           <div
             className={`w-8 h-0.5 ${
@@ -575,7 +724,9 @@ Keep the response conversational and practical for a farmer.`;
             >
               <Brain className="h-4 w-4" />
             </div>
-            <span className="ml-2 text-sm font-medium">AI Recommendations</span>
+            <span className="ml-2 text-sm font-medium">
+              🤖 AI Recommendations
+            </span>
           </div>
           <div
             className={`w-8 h-0.5 ${
@@ -594,7 +745,7 @@ Keep the response conversational and practical for a farmer.`;
             >
               <Plus className="h-4 w-4" />
             </div>
-            <span className="ml-2 text-sm font-medium">Field Details</span>
+            <span className="ml-2 text-sm font-medium">📝 Field Details</span>
           </div>
         </div>
       </div>
@@ -610,79 +761,33 @@ Keep the response conversational and practical for a farmer.`;
             Soil Laboratory Analysis
           </h3>
           <p className="text-sm text-gray-600">
-            Please enter the data from your soil laboratory test report to get
-            AI-powered crop recommendations and field analysis.
+            Enter your soil laboratory test results for AI-powered crop
+            recommendations and field optimization.
           </p>
         </div>
+
+        {/* Gemini Status Indicator */}
+        {geminiStatus === "connected" && (
+          <div className="inline-flex items-center space-x-2 px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs">
+            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+            <span>🤖 Gemini AI Ready</span>
+          </div>
+        )}
+        {geminiStatus === "not-configured" && (
+          <div className="inline-flex items-center space-x-2 px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-xs">
+            <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+            <span>⚠️ AI Key Required</span>
+          </div>
+        )}
+        {geminiStatus === "disconnected" && (
+          <div className="inline-flex items-center space-x-2 px-3 py-1 bg-red-100 text-red-700 rounded-full text-xs">
+            <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+            <span>❌ AI Unavailable</span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Potassium Level (ppm) *
-          </label>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            value={soilAnalysis.potassium}
-            onChange={(e) =>
-              handleSoilAnalysisChange("potassium", e.target.value)
-            }
-            placeholder="e.g., 150"
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-              errors.potassium ? "border-red-500" : "border-gray-300"
-            }`}
-          />
-          {errors.potassium && (
-            <p className="text-red-500 text-xs mt-1">{errors.potassium}</p>
-          )}
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Phosphorus Level (ppm) *
-          </label>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            value={soilAnalysis.phosphorus}
-            onChange={(e) =>
-              handleSoilAnalysisChange("phosphorus", e.target.value)
-            }
-            placeholder="e.g., 25"
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-              errors.phosphorus ? "border-red-500" : "border-gray-300"
-            }`}
-          />
-          {errors.phosphorus && (
-            <p className="text-red-500 text-xs mt-1">{errors.phosphorus}</p>
-          )}
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Nitrogen Level (ppm) *
-          </label>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            value={soilAnalysis.nitrogen}
-            onChange={(e) =>
-              handleSoilAnalysisChange("nitrogen", e.target.value)
-            }
-            placeholder="e.g., 40"
-            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-              errors.nitrogen ? "border-red-500" : "border-gray-300"
-            }`}
-          />
-          {errors.nitrogen && (
-            <p className="text-red-500 text-xs mt-1">{errors.nitrogen}</p>
-          )}
-        </div>
-
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             pH Level *
@@ -694,11 +799,14 @@ Keep the response conversational and practical for a farmer.`;
             max="14"
             value={soilAnalysis.pH}
             onChange={(e) => handleSoilAnalysisChange("pH", e.target.value)}
-            placeholder="e.g., 6.5"
+            placeholder="e.g., 6.5 (ideal: 6.0-7.0)"
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
               errors.pH ? "border-red-500" : "border-gray-300"
             }`}
           />
+          <p className="text-xs text-gray-500 mt-1">
+            Measures soil acidity/alkalinity
+          </p>
           {errors.pH && (
             <p className="text-red-500 text-xs mt-1">{errors.pH}</p>
           )}
@@ -706,24 +814,101 @@ Keep the response conversational and practical for a farmer.`;
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Organic Matter Content (%) *
+            Buffer Index *
           </label>
           <input
             type="number"
             step="0.1"
             min="0"
-            max="100"
-            value={soilAnalysis.organicMatter}
+            value={soilAnalysis.bufferIndex}
             onChange={(e) =>
-              handleSoilAnalysisChange("organicMatter", e.target.value)
+              handleSoilAnalysisChange("bufferIndex", e.target.value)
             }
-            placeholder="e.g., 3.2"
+            placeholder="e.g., 6.8"
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-              errors.organicMatter ? "border-red-500" : "border-gray-300"
+              errors.bufferIndex ? "border-red-500" : "border-gray-300"
             }`}
           />
-          {errors.organicMatter && (
-            <p className="text-red-500 text-xs mt-1">{errors.organicMatter}</p>
+          <p className="text-xs text-gray-500 mt-1">
+            Determines lime requirements
+          </p>
+          {errors.bufferIndex && (
+            <p className="text-red-500 text-xs mt-1">{errors.bufferIndex}</p>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Nitrogen (N) ppm *
+          </label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={soilAnalysis.nitrogen}
+            onChange={(e) =>
+              handleSoilAnalysisChange("nitrogen", e.target.value)
+            }
+            placeholder="e.g., 25"
+            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+              errors.nitrogen ? "border-red-500" : "border-gray-300"
+            }`}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Available nitrogen for plant growth
+          </p>
+          {errors.nitrogen && (
+            <p className="text-red-500 text-xs mt-1">{errors.nitrogen}</p>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Phosphorus (P) ppm *
+          </label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={soilAnalysis.phosphorus}
+            onChange={(e) =>
+              handleSoilAnalysisChange("phosphorus", e.target.value)
+            }
+            placeholder="e.g., 15"
+            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+              errors.phosphorus ? "border-red-500" : "border-gray-300"
+            }`}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            For root development and flowering
+          </p>
+          {errors.phosphorus && (
+            <p className="text-red-500 text-xs mt-1">{errors.phosphorus}</p>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Potassium (K) ppm *
+          </label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={soilAnalysis.potassium}
+            onChange={(e) =>
+              handleSoilAnalysisChange("potassium", e.target.value)
+            }
+            placeholder="e.g., 120"
+            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+              errors.potassium ? "border-red-500" : "border-gray-300"
+            }`}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            For plant health and disease resistance
+          </p>
+          {errors.potassium && (
+            <p className="text-red-500 text-xs mt-1">{errors.potassium}</p>
           )}
         </div>
 
@@ -744,14 +929,63 @@ Keep the response conversational and practical for a farmer.`;
               </option>
             ))}
           </select>
+          <p className="text-xs text-gray-500 mt-1">
+            Affects drainage and water retention
+          </p>
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Organic Matter Content (%) *
+          </label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            max="100"
+            value={soilAnalysis.organicMatter}
+            onChange={(e) =>
+              handleSoilAnalysisChange("organicMatter", e.target.value)
+            }
+            placeholder="e.g., 3.5 (good: >3%, excellent: >5%)"
+            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+              errors.organicMatter ? "border-red-500" : "border-gray-300"
+            }`}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Percentage of decomposed organic material
+          </p>
+          {errors.organicMatter && (
+            <p className="text-red-500 text-xs mt-1">{errors.organicMatter}</p>
+          )}
         </div>
       </div>
 
       {aiError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-red-600 text-sm">{aiError}</p>
+          {geminiStatus !== "connected" && (
+            <p className="text-red-500 text-xs mt-2">
+              💡 Tip: Add your Gemini API key to .env for AI-powered
+              recommendations
+            </p>
+          )}
         </div>
       )}
+
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h4 className="text-sm font-semibold text-blue-700 mb-2">
+          📋 Lab Test Guide
+        </h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-blue-600">
+          <div>• pH: 6.0-7.0 ideal for vegetables</div>
+          <div>• N: 20-40 ppm for most crops</div>
+          <div>• P: 10-30 ppm adequate</div>
+          <div>• K: 100-200 ppm good range</div>
+          <div>• Organic Matter: 3% good, 5% excellent</div>
+          <div>• Buffer Index: Guides pH correction</div>
+        </div>
+      </div>
 
       <div className="flex space-x-3">
         <button
@@ -769,12 +1003,12 @@ Keep the response conversational and practical for a farmer.`;
           {isLoadingAI ? (
             <>
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-              <span>Analyzing Soil...</span>
+              <span>🤖 Analyzing Soil...</span>
             </>
           ) : (
             <>
               <Brain className="h-4 w-4" />
-              <span>Get AI Analysis</span>
+              <span>🧪 Get AI Analysis</span>
             </>
           )}
         </button>
@@ -828,7 +1062,7 @@ Keep the response conversational and practical for a farmer.`;
                       <div className="flex items-center mb-1">
                         <Brain className="h-3 w-3 mr-1 text-green-600" />
                         <span className="text-xs font-medium text-green-600">
-                          AI Advisor
+                          Gemini AI
                         </span>
                       </div>
                     )}
@@ -870,7 +1104,7 @@ Keep the response conversational and practical for a farmer.`;
                   <div className="flex items-center">
                     <Brain className="h-3 w-3 mr-1 text-green-600" />
                     <span className="text-xs font-medium text-green-600 mr-2">
-                      AI Advisor
+                      Gemini AI
                     </span>
                     <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-green-600"></div>
                   </div>
@@ -902,8 +1136,7 @@ Keep the response conversational and practical for a farmer.`;
           </form>
 
           <p className="text-xs text-gray-500">
-            💡 Tip: Ask specific questions like "Can I grow oranges?" or "What
-            about coffee plants?"
+            💡 Tip: Ask specific questions based on your soil analysis results
           </p>
         </div>
       )}
@@ -916,34 +1149,51 @@ Keep the response conversational and practical for a farmer.`;
         <div className="bg-green-100 p-4 rounded-lg mb-4">
           <Brain className="h-12 w-12 text-green-600 mx-auto mb-2" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">
-            AI Field Analysis & Crop Recommendations
+            🤖 AI Soil Analysis & Crop Recommendations
           </h3>
           <p className="text-sm text-gray-600">
-            Based on your soil analysis, here's our complete field assessment:
+            Based on your soil laboratory analysis, here's what our AI
+            recommends:
           </p>
         </div>
       </div>
 
-      {/* AI Explanation */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-        <h4 className="text-sm font-semibold text-blue-700 mb-2 flex items-center">
-          <Brain className="h-4 w-4 mr-2" />
-          Why These Crops Are Recommended
-        </h4>
-        <p className="text-blue-800 text-sm leading-relaxed">{aiExplanation}</p>
-      </div>
-
-      {/* AI Field Assessment */}
-      <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-        <h4 className="text-sm font-semibold text-green-700 mb-3 flex items-center">
-          <CheckCircle className="h-4 w-4 mr-2" />
-          AI Field Assessment
+      {/* Soil Condition Assessment */}
+      <div
+        className={`border rounded-lg p-4 mb-6 ${
+          aiFieldAnalysis.soilCondition === "excellent"
+            ? "bg-green-50 border-green-200"
+            : aiFieldAnalysis.soilCondition === "good"
+            ? "bg-blue-50 border-blue-200"
+            : aiFieldAnalysis.soilCondition === "fair"
+            ? "bg-yellow-50 border-yellow-200"
+            : "bg-red-50 border-red-200"
+        }`}
+      >
+        <h4 className="text-sm font-semibold mb-2 flex items-center">
+          <FlaskConical className="h-4 w-4 mr-2" />
+          Soil Condition Assessment
         </h4>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <span className="text-xs text-green-600 font-medium">
-              Field Health:
-            </span>
+            <span className="text-xs font-medium">Overall Soil Health:</span>
+            <div
+              className={`inline-block ml-2 px-2 py-1 rounded-full text-xs font-medium ${
+                aiFieldAnalysis.soilCondition === "excellent"
+                  ? "text-green-600 bg-green-100"
+                  : aiFieldAnalysis.soilCondition === "good"
+                  ? "text-blue-600 bg-blue-100"
+                  : aiFieldAnalysis.soilCondition === "fair"
+                  ? "text-yellow-600 bg-yellow-100"
+                  : "text-red-600 bg-red-100"
+              }`}
+            >
+              {aiFieldAnalysis.soilCondition.charAt(0).toUpperCase() +
+                aiFieldAnalysis.soilCondition.slice(1)}
+            </div>
+          </div>
+          <div>
+            <span className="text-xs font-medium">Field Health Potential:</span>
             <div
               className={`inline-block ml-2 px-2 py-1 rounded-full text-xs font-medium ${
                 aiFieldAnalysis.health === "excellent"
@@ -959,16 +1209,75 @@ Keep the response conversational and practical for a farmer.`;
                 aiFieldAnalysis.health.slice(1)}
             </div>
           </div>
-          <div>
-            <span className="text-xs text-green-600 font-medium">
-              Recommended Water:
-            </span>
-            <span className="ml-2 text-sm font-semibold text-green-800">
-              {aiFieldAnalysis.recommendedWater} L/m²
-            </span>
-          </div>
         </div>
-        <p className="text-green-700 text-xs mt-3 leading-relaxed">
+      </div>
+
+      {/* AI Explanation */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <h4 className="text-sm font-semibold text-blue-700 mb-2 flex items-center">
+          <Brain className="h-4 w-4 mr-2" />
+          Why These Crops Are Recommended
+        </h4>
+        <p className="text-blue-800 text-sm leading-relaxed">{aiExplanation}</p>
+      </div>
+
+      {/* Soil Issues & Recommendations */}
+      {(aiFieldAnalysis.soilIssues?.length > 0 ||
+        aiFieldAnalysis.recommendations?.length > 0) && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+          <h4 className="text-sm font-semibold text-yellow-700 mb-3">
+            🔧 Soil Improvement Recommendations
+          </h4>
+
+          {aiFieldAnalysis.soilIssues?.length > 0 && (
+            <div className="mb-3">
+              <p className="text-xs font-medium text-yellow-700 mb-1">
+                Issues Identified:
+              </p>
+              <ul className="text-xs text-yellow-800 space-y-1">
+                {aiFieldAnalysis.soilIssues.map((issue, index) => (
+                  <li key={index} className="flex items-start">
+                    <span className="text-yellow-600 mr-1">•</span>
+                    {issue}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {aiFieldAnalysis.recommendations?.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-yellow-700 mb-1">
+                Recommendations:
+              </p>
+              <ul className="text-xs text-yellow-800 space-y-1">
+                {aiFieldAnalysis.recommendations.map((rec, index) => (
+                  <li key={index} className="flex items-start">
+                    <span className="text-yellow-600 mr-1">✓</span>
+                    {rec}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Water Recommendation */}
+      <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+        <h4 className="text-sm font-semibold text-green-700 mb-3 flex items-center">
+          <Droplets className="h-4 w-4 mr-2" />
+          💧 Irrigation Recommendation
+        </h4>
+        <div className="flex items-center space-x-4 mb-2">
+          <span className="text-xs text-green-600 font-medium">
+            Recommended Water:
+          </span>
+          <span className="text-sm font-semibold text-green-800 bg-green-100 px-2 py-1 rounded">
+            {aiFieldAnalysis.recommendedWater} L/m²
+          </span>
+        </div>
+        <p className="text-green-700 text-xs leading-relaxed">
           {aiFieldAnalysis.explanation}
         </p>
       </div>
@@ -976,17 +1285,21 @@ Keep the response conversational and practical for a farmer.`;
       {/* Crop Selection */}
       <div>
         <h4 className="text-sm font-semibold text-gray-700 mb-3">
-          Select Your Preferred Crop:
+          🌱 Select Your Preferred Crop (AI Recommended):
         </h4>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {aiRecommendations.map((crop, index) => (
             <button
               key={index}
               onClick={() => handleCropSelection(crop)}
-              className="p-4 border-2 border-gray-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition-colors text-center group"
+              className="p-4 border-2 border-gray-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition-colors text-center group relative"
             >
               <Leaf className="h-6 w-6 text-green-500 mx-auto mb-2 group-hover:text-green-600" />
               <span className="text-sm font-medium text-gray-900">{crop}</span>
+              <div
+                className="absolute top-1 right-1 w-2 h-2 bg-green-500 rounded-full"
+                title="AI Recommended"
+              ></div>
             </button>
           ))}
         </div>
@@ -995,11 +1308,11 @@ Keep the response conversational and practical for a farmer.`;
       {/* Chat System */}
       {renderChatSystem()}
 
-      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-        <p className="text-yellow-800 text-sm">
-          💡 <strong>Note:</strong> Temperature and soil moisture will be
-          automatically monitored by sensors. Field health and irrigation
-          amounts have been optimized by AI based on your soil analysis.
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <p className="text-blue-800 text-sm">
+          <strong>🔬 Next Steps:</strong> Temperature and soil moisture will be
+          automatically monitored by sensors. The AI has optimized irrigation
+          amounts based on your specific soil analysis.
         </p>
       </div>
 
@@ -1009,14 +1322,14 @@ Keep the response conversational and practical for a farmer.`;
           onClick={() => setCurrentStep(1)}
           className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
         >
-          Back to Soil Analysis
+          ← Back to Soil Analysis
         </button>
         <button
           type="button"
           onClick={() => setCurrentStep(3)}
           className="flex-1 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors font-medium flex items-center justify-center space-x-2"
         >
-          <span>Continue with Selected Crop</span>
+          <span>Continue with Selected Crop →</span>
         </button>
       </div>
     </div>
@@ -1076,7 +1389,9 @@ Keep the response conversational and practical for a farmer.`;
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Selected Crop *{" "}
             {isFirstField && aiRecommendations.length > 0 && (
-              <span className="text-green-600 text-xs">(AI Recommended)</span>
+              <span className="text-green-600 text-xs">
+                (🤖 AI Recommended)
+              </span>
             )}
           </label>
 
@@ -1091,7 +1406,7 @@ Keep the response conversational and practical for a farmer.`;
               >
                 {/* Show AI recommendations first if available */}
                 {isFirstField && aiRecommendations.length > 0 && (
-                  <optgroup label="🧠 AI Recommended">
+                  <optgroup label="🤖 AI Recommended (Based on Your Soil)">
                     {aiRecommendations.map((crop) => (
                       <option key={`ai-${crop}`} value={crop}>
                         {crop}
@@ -1138,7 +1453,10 @@ Keep the response conversational and practical for a farmer.`;
                   onClick={() => {
                     setIsCustomCrop(false);
                     setCustomCropInput("");
-                    setFormData((prev) => ({ ...prev, cropType: "Tomatoes" }));
+                    setFormData((prev) => ({
+                      ...prev,
+                      cropType: aiRecommendations[0] || "Tomatoes",
+                    }));
                   }}
                   className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-600"
                   title="Cancel custom input"
@@ -1191,7 +1509,7 @@ Keep the response conversational and practical for a farmer.`;
                 aiRecommendations.includes(formData.cropType) && (
                   <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
                     <Brain className="h-3 w-3 mr-1" />
-                    AI Recommended
+                    🤖 AI Recommended
                   </span>
                 )}
               {isCustomCrop && (
@@ -1225,7 +1543,7 @@ Keep the response conversational and practical for a farmer.`;
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-gray-900 flex items-center space-x-2">
             <Brain className="h-5 w-5 text-purple-500" />
-            <span>AI-Optimized Settings</span>
+            <span>🤖 AI-Optimized Settings</span>
           </h3>
 
           <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
@@ -1378,11 +1696,11 @@ Keep the response conversational and practical for a farmer.`;
             </div>
             <div>
               <h2 className="text-xl font-bold text-gray-900">
-                {isFirstField ? "Setup Your First Field" : "Add New Field"}
+                {isFirstField ? "🧪 Smart Field Setup" : "Add New Field"}
               </h2>
               <p className="text-sm text-gray-500">
                 {isFirstField
-                  ? "AI-powered soil analysis and crop optimization"
+                  ? "AI-powered soil analysis and crop optimization with Gemini AI"
                   : "Configure your new irrigation field"}
               </p>
             </div>

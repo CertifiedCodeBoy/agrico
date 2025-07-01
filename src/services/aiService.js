@@ -1,17 +1,17 @@
-import { ollamaService } from "./ollamaService";
+import { geminiService } from "./geminiService";
 import cropDatabase from "../data/cropDatabase.json";
 
-// Enhanced AI service with Ollama integration
+// Enhanced AI service with Gemini integration
 export class AIService {
   static async getWateringRecommendation(field, weather) {
     try {
-      // Try Ollama first
-      return await ollamaService.getWateringRecommendation(field, weather);
+      // Use Gemini for real AI responses
+      return await geminiService.getWateringRecommendation(field, weather);
     } catch (error) {
-      // Fallback to mock response
-      const cropInfo = cropDatabase.find(
-        (crop) => crop.name === field.cropType
-      );
+      console.error("Gemini AI Error:", error);
+      
+      // Enhanced fallback logic
+      const cropInfo = cropDatabase.find(crop => crop.name === field.cropType);
       if (!cropInfo) {
         return `Unable to find information for ${field.cropType}. Please check crop type.`;
       }
@@ -19,9 +19,7 @@ export class AIService {
       const [minMoisture, maxMoisture] = cropInfo.soilMoistureRange;
 
       if (field.soilMoisture < minMoisture) {
-        return `🚿 Water ${
-          field.name
-        } now! Your ${field.cropType.toLowerCase()} need ${
+        return `🚿 Water ${field.name} now! Your ${field.cropType.toLowerCase()} need ${
           field.recommendedWater
         }L/m² (about ${Math.round(
           field.recommendedWater * field.area * 10000
@@ -45,17 +43,17 @@ export class AIService {
       // Find crop info for context
       const cropInfo = cropDatabase.find((crop) => crop.name === cropType);
 
-      // Use Ollama for real AI responses
-      return await ollamaService.getCropAdvice(cropType, question, cropInfo);
+      // Use Gemini for real AI responses
+      return await geminiService.getCropAdvice(cropType, question, cropInfo);
     } catch (error) {
       // Fallback response
-      return "I'm having trouble connecting to the AI service. Please make sure Ollama is running locally on port 11434. In the meantime, try asking about watering schedules, soil moisture, or plant diseases. 🌱";
+      return "I'm having trouble connecting to the AI service. Please check your Gemini API key configuration. In the meantime, try asking about watering schedules, soil moisture, or plant diseases. 🌱";
     }
   }
 
   static async analyzePlantHealth(imageData) {
     try {
-      return await ollamaService.analyzePlantHealth(imageData);
+      return await geminiService.analyzePlantHealth(imageData);
     } catch (error) {
       // Mock fallback
       const conditions = [
@@ -63,11 +61,13 @@ export class AIService {
         "⚠️ Slight yellowing detected - may indicate overwatering or nutrient deficiency",
         "🔍 Some brown spots visible - monitor for fungal disease",
         "💧 Leaf wilting suggests underwatering - increase irrigation frequency",
+        "🌡️ Heat stress symptoms visible - increase shade and watering frequency",
+        "🦠 Possible pest damage detected - inspect leaves carefully",
       ];
 
       return (
         conditions[Math.floor(Math.random() * conditions.length)] +
-        " (Note: Connect Ollama for AI analysis)"
+        " (Note: AI analysis temporarily unavailable - manual inspection recommended)"
       );
     }
   }
