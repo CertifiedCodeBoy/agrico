@@ -6,11 +6,16 @@ import Analytics from "./pages/Analytics";
 import CropAssistant from "./pages/CropAssistant";
 import Settings from "./pages/Settings";
 import WaterManagement from "./pages/WaterManagement";
+import LandingPage from "./components/LandingPage";
 
 function App() {
   return (
     <Router>
       <Routes>
+        {/* Landing page route */}
+        <Route path="/landing" element={<LandingPage />} />
+
+        {/* Dashboard routes with layout */}
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="analytics" element={<Analytics />} />
