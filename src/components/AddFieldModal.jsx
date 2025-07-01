@@ -464,20 +464,15 @@ Keep the response conversational and practical for a farmer.`;
 
     const newField = {
       name: formData.name.trim(),
-      cropType: formData.cropType,
-      area: parseFloat(formData.area),
-      lastWatered: new Date(),
+      cropType: formData.cropType, // This will be sent as "crop" to backend
+      area: parseFloat(formData.area), // This will be sent as "surface" to backend
       pumpStatus: formData.pumpStatus,
 
-      // AI-determined values
-      health: aiFieldAnalysis.health,
-      recommendedWater: aiFieldAnalysis.recommendedWater,
+      // AI-determined values (for frontend use)
+      health: isFirstField ? aiFieldAnalysis.health : "good",
+      recommendedWater: isFirstField ? aiFieldAnalysis.recommendedWater : 2.5,
 
-      // These will be fetched from backend later
-      soilMoisture: 0, // Will be updated from sensors
-      temperature: 0, // Will be updated from sensors
-
-      // Include soil analysis for first field
+      // Include soil analysis for first field (frontend metadata)
       ...(isFirstField && {
         soilAnalysis: {
           potassium: parseFloat(soilAnalysis.potassium),
@@ -498,7 +493,6 @@ Keep the response conversational and practical for a farmer.`;
     };
 
     onAddField(newField);
-    handleClose();
   };
 
   const handleClose = () => {

@@ -1,36 +1,35 @@
 import React, { useState, useEffect } from "react";
-import { mockFields, mockWeather } from "../data/mockData";
-import FieldCard from "../components/FieldCard";
-import WeatherWidget from "../components/WeatherWidget";
-import AddFieldModal from "../components/AddFieldModal";
 import {
-  TrendingUp,
-  Droplets,
-  Zap,
-  AlertTriangle,
   Plus,
   Clock,
+  Droplets,
+  Thermometer,
+  AlertTriangle,
+  TrendingUp,
+  Zap,
   CheckCircle,
 } from "lucide-react";
+import FieldCard from "../components/FieldCard";
+import AddFieldModal from "../components/AddFieldModal";
+import WeatherWidget from "../components/WeatherWidget";
+import { useFields } from "../hooks/useFields";
+import { ErrorDisplay } from "../components/ErrorBoundary";
 
 export default function Dashboard() {
-  // Initialize fields with individual scheduleSettings
-  const [fields, setFields] = useState(
-    mockFields.map((field) => ({
-      ...field,
-      scheduleSettings: {
-        enabled: false,
-        startTime: "21:00",
-        endTime: "23:00",
-      },
-    }))
-  );
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const {
+    fields,
+    loading,
+    error,
+    addField,
+    togglePump,
+    updateFieldSchedule,
+    fetchFields,
+  } = useFields();
 
-  // Keep the global schedule settings
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [scheduleSettings, setScheduleSettings] = useState({
-    startTime: "21:00", // 9 PM
-    endTime: "23:00", // 11 PM
+    startTime: "21:00",
+    endTime: "23:00",
     enabled: false,
   });
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -39,51 +38,18 @@ export default function Dashboard() {
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-    }, 60000); // Update every minute
+    }, 60000);
 
     return () => clearInterval(timer);
   }, []);
 
-  // Check if current time is within individual field's scheduled watering window
-  const isWithinFieldSchedule = (field) => {
-    if (!field.scheduleSettings?.enabled) return false;
-
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentTimeInMinutes = currentHour * 60 + currentMinute;
-
-    const [startHour, startMinute] = field.scheduleSettings.startTime
-      .split(":")
-      .map(Number);
-    const [endHour, endMinute] = field.scheduleSettings.endTime
-      .split(":")
-      .map(Number);
-    const startTimeInMinutes = startHour * 60 + startMinute;
-    const endTimeInMinutes = endHour * 60 + endMinute;
-
-    // Handle schedule that crosses midnight
-    if (startTimeInMinutes > endTimeInMinutes) {
-      return (
-        currentTimeInMinutes >= startTimeInMinutes ||
-        currentTimeInMinutes <= endTimeInMinutes
-      );
-    } else {
-      return (
-        currentTimeInMinutes >= startTimeInMinutes &&
-        currentTimeInMinutes <= endTimeInMinutes
-      );
-    }
-  };
-
-  // Check if current time is within global scheduled watering window
+  // Check if current time is within global schedule
   const isWithinSchedule = () => {
     if (!scheduleSettings.enabled) return false;
 
-    const now = new Date();
+    const now = currentTime;
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
-    const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
     const [startHour, startMinute] = scheduleSettings.startTime
       .split(":")
@@ -91,50 +57,55 @@ export default function Dashboard() {
     const [endHour, endMinute] = scheduleSettings.endTime
       .split(":")
       .map(Number);
-    const startTimeInMinutes = startHour * 60 + startMinute;
-    const endTimeInMinutes = endHour * 60 + endMinute;
 
-    // Handle schedule that crosses midnight
-    if (startTimeInMinutes > endTimeInMinutes) {
-      return (
-        currentTimeInMinutes >= startTimeInMinutes ||
-        currentTimeInMinutes <= endTimeInMinutes
-      );
+    const currentMinutes = currentHour * 60 + currentMinute;
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+
+    if (startMinutes <= endMinutes) {
+      return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
     } else {
-      return (
-        currentTimeInMinutes >= startTimeInMinutes &&
-        currentTimeInMinutes <= endTimeInMinutes
-      );
+      return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
     }
   };
 
-  // Auto-manage pump status based on both individual and global schedules
-  useEffect(() => {
-    setFields((prev) =>
-      prev.map((field) => {
-        // Individual field schedule takes priority
-        if (field.scheduleSettings?.enabled) {
-          const shouldPumpBeOn = isWithinFieldSchedule(field);
-          return {
-            ...field,
-            pumpStatus: shouldPumpBeOn ? "on" : "auto",
-          };
-        }
-        // Fall back to global schedule if no individual schedule
-        else if (scheduleSettings.enabled) {
-          const shouldPumpBeOn = isWithinSchedule();
-          return {
-            ...field,
-            pumpStatus: shouldPumpBeOn ? "on" : "auto",
-            scheduledWatering: scheduleSettings.enabled,
-          };
-        }
-        return field;
-      })
-    );
-  }, [currentTime, scheduleSettings]);
+  // Check if current time is within individual field's schedule
+  const isWithinFieldSchedule = (field) => {
+    if (!field?.scheduleSettings?.enabled) return false;
 
-  const handlePumpToggle = (fieldId, status) => {
+    const now = currentTime;
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+
+    const [startHour, startMinute] = field.scheduleSettings.startTime
+      .split(":")
+      .map(Number);
+    const [endHour, endMinute] = field.scheduleSettings.endTime
+      .split(":")
+      .map(Number);
+
+    const currentMinutes = currentHour * 60 + currentMinute;
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+
+    if (startMinutes <= endMinutes) {
+      return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+    } else {
+      return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+    }
+  };
+
+  const handleAddField = async (newFieldData) => {
+    try {
+      await addField(newFieldData);
+      setIsAddModalOpen(false);
+    } catch (error) {
+      console.error("Failed to add field:", error);
+      alert(`Failed to add field: ${error.message}`);
+    }
+  };
+
+  const handlePumpToggle = async (fieldId, status) => {
     const field = fields.find((f) => f.id === fieldId);
 
     // Don't allow manual control when field has individual schedule active
@@ -157,35 +128,12 @@ export default function Dashboard() {
       return;
     }
 
-    setFields((prev) =>
-      prev.map((field) =>
-        field.id === fieldId ? { ...field, pumpStatus: status } : field
-      )
-    );
-  };
-
-  const handleFieldScheduleUpdate = (fieldId, fieldScheduleSettings) => {
-    setFields((prev) =>
-      prev.map((field) =>
-        field.id === fieldId
-          ? { ...field, scheduleSettings: fieldScheduleSettings }
-          : field
-      )
-    );
-  };
-
-  const handleAddField = (newFieldData) => {
-    const newField = {
-      ...newFieldData,
-      id: Date.now().toString(),
-      scheduleSettings: {
-        enabled: false,
-        startTime: "21:00",
-        endTime: "23:00",
-      },
-      scheduledWatering: scheduleSettings.enabled,
-    };
-    setFields((prev) => [...prev, newField]);
+    try {
+      await togglePump(fieldId, status);
+    } catch (error) {
+      console.error("Failed to toggle pump:", error);
+      alert(`Failed to control pump: ${error.message}`);
+    }
   };
 
   const handleScheduleSubmit = (e) => {
@@ -209,14 +157,6 @@ export default function Dashboard() {
 
   const handleCancelSchedule = () => {
     setScheduleSettings((prev) => ({ ...prev, enabled: false }));
-    // Reset pumps that don't have individual schedules to auto mode
-    setFields((prev) =>
-      prev.map((field) => ({
-        ...field,
-        pumpStatus: field.scheduleSettings?.enabled ? field.pumpStatus : "auto",
-        scheduledWatering: false,
-      }))
-    );
   };
 
   const formatTime = (timeString) => {
@@ -228,9 +168,33 @@ export default function Dashboard() {
     return `${displayHour}:${minute} ${ampm}`;
   };
 
-  // Stats calculations
-  const totalFields = fields.length;
-  const activePumps = fields.filter((f) => f.pumpStatus === "on").length;
+  // Loading state
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading your fields...</p>
+          <p className="text-sm text-gray-500 mt-2">
+            Connecting to {import.meta.env.VITE_BACKEND_URL}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <ErrorDisplay
+        error={error}
+        onRetry={fetchFields}
+        title="Failed to Load Fields"
+      />
+    );
+  }
+
+  // Statistics calculations
   const fieldsWithIndividualSchedules = fields.filter(
     (f) => f.scheduleSettings?.enabled
   ).length;
@@ -246,6 +210,9 @@ export default function Dashboard() {
   const needsAttention = fields.filter(
     (f) => f.soilMoisture < 35 || f.health === "poor"
   ).length;
+  const activeFields = fields.filter(
+    (f) => f.pumpStatus === "on" || f.pumpStatus === "auto"
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -260,6 +227,20 @@ export default function Dashboard() {
               Manage your smart irrigation system and monitor field conditions
               in real-time
             </p>
+
+            <div className="flex items-center space-x-4 mt-2">
+              <div className="flex items-center space-x-2 text-sm">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span className="text-gray-600">
+                  {import.meta.env.VITE_MOCK_SENSORS === "true"
+                    ? "Demo Mode"
+                    : "Live Data"}
+                </span>
+              </div>
+              <div className="text-sm text-gray-500">
+                Backend: {import.meta.env.VITE_BACKEND_URL}
+              </div>
+            </div>
 
             {/* Global Schedule Status */}
             {scheduleSettings.enabled && (
@@ -296,7 +277,7 @@ export default function Dashboard() {
           </div>
           <button
             onClick={() => setIsAddModalOpen(true)}
-            className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors font-medium flex items-center space-x-2 shadow-sm"
+            className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors flex items-center space-x-2"
           >
             <Plus className="h-4 w-4" />
             <span>Add Field</span>
@@ -307,68 +288,66 @@ export default function Dashboard() {
       {/* Stats Overview */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="bg-blue-100 p-2 rounded-lg">
+              <Droplets className="h-5 w-5 text-blue-600" />
+            </div>
             <div>
               <p className="text-sm text-gray-500">Total Fields</p>
-              <p className="text-2xl font-bold text-gray-900">{totalFields}</p>
-            </div>
-            <TrendingUp className="h-8 w-8 text-green-500" />
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Active Pumps</p>
-              <p
-                className={`text-2xl font-bold ${
-                  isWithinSchedule() ? "text-green-600" : "text-blue-600"
-                }`}
-              >
-                {activePumps}
+              <p className="text-lg font-semibold text-gray-900">
+                {fields.length}
               </p>
-              {(scheduleSettings.enabled ||
-                fieldsWithIndividualSchedules > 0) && (
-                <p className="text-xs text-gray-500 mt-1">
-                  {scheduleSettings.enabled && isWithinSchedule()
-                    ? "Global ON"
-                    : scheduleSettings.enabled
-                    ? "Global OFF"
-                    : ""}
-                  {fieldsWithIndividualSchedules > 0 &&
-                    " | Individual schedules active"}
-                </p>
-              )}
             </div>
-            <Zap
-              className={`h-8 w-8 ${
-                isWithinSchedule() ? "text-green-500" : "text-blue-500"
-              }`}
-            />
           </div>
         </div>
 
         <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="bg-green-100 p-2 rounded-lg">
+              <Thermometer className="h-5 w-5 text-green-600" />
+            </div>
             <div>
-              <p className="text-sm text-gray-500">Avg Moisture</p>
-              <p className="text-2xl font-bold text-green-600">
+              <p className="text-sm text-gray-500">Active Irrigation</p>
+              <p className="text-lg font-semibold text-gray-900">
+                {activeFields}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+          <div className="flex items-center space-x-3">
+            <div className="bg-purple-100 p-2 rounded-lg">
+              <Clock className="h-5 w-5 text-purple-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Avg. Moisture</p>
+              <p className="text-lg font-semibold text-gray-900">
                 {averageMoisture}%
               </p>
             </div>
-            <Droplets className="h-8 w-8 text-green-500" />
           </div>
         </div>
 
         <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div
+              className={`p-2 rounded-lg ${
+                needsAttention > 0 ? "bg-red-100" : "bg-green-100"
+              }`}
+            >
+              <AlertTriangle
+                className={`h-5 w-5 ${
+                  needsAttention > 0 ? "text-red-600" : "text-green-600"
+                }`}
+              />
+            </div>
             <div>
               <p className="text-sm text-gray-500">Needs Attention</p>
-              <p className="text-2xl font-bold text-red-600">
+              <p className="text-lg font-semibold text-gray-900">
                 {needsAttention}
               </p>
             </div>
-            <AlertTriangle className="h-8 w-8 text-red-500" />
           </div>
         </div>
       </div>
@@ -376,43 +355,57 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Fields Grid */}
         <div className="lg:col-span-3">
-          {fields.length === 0 ? (
-            <div className="bg-white rounded-xl p-12 shadow-sm border border-gray-200 text-center">
-              <div className="bg-gray-100 rounded-full p-4 w-16 h-16 mx-auto mb-4">
-                <Plus className="h-8 w-8 text-gray-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                No Fields Added Yet
+          {/* Fields Grid */}
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Your Fields ({fields.length})
               </h3>
-              <p className="text-gray-500 mb-4">
-                Start by adding your first field to begin monitoring and
-                managing your irrigation system.
-              </p>
-              <button
-                onClick={() => setIsAddModalOpen(true)}
-                className="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors font-medium"
-              >
-                Add Your First Field
-              </button>
+              {fields.length > 0 && (
+                <div className="text-sm text-gray-500">
+                  Last updated: {new Date().toLocaleTimeString()}
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {fields.map((field) => (
-                <FieldCard
-                  key={field.id}
-                  field={field}
-                  onPumpToggle={handlePumpToggle}
-                  onScheduleUpdate={handleFieldScheduleUpdate}
-                  isScheduleActive={isWithinFieldSchedule(field)}
-                  globalScheduleActive={
-                    !field.scheduleSettings?.enabled &&
-                    scheduleSettings.enabled &&
-                    isWithinSchedule()
-                  }
-                />
-              ))}
-            </div>
-          )}
+
+            {fields.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="bg-gray-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
+                  <Plus className="h-8 w-8 text-gray-400" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  No Fields Added Yet
+                </h3>
+                <p className="text-gray-500 mb-4">
+                  Start by adding your first field to begin monitoring and
+                  managing your irrigation system.
+                </p>
+                <button
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors font-medium"
+                >
+                  Add Your First Field
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {fields.map((field) => (
+                  <FieldCard
+                    key={field.id}
+                    field={field}
+                    onPumpToggle={handlePumpToggle}
+                    onScheduleUpdate={updateFieldSchedule}
+                    isScheduleActive={isWithinFieldSchedule(field)}
+                    globalScheduleActive={
+                      !field.scheduleSettings?.enabled &&
+                      scheduleSettings.enabled &&
+                      isWithinSchedule()
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Sidebar */}
@@ -557,6 +550,7 @@ export default function Dashboard() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onAddField={handleAddField}
+        existingFieldsCount={fields.length}
       />
     </div>
   );

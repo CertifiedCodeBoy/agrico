@@ -8,6 +8,10 @@ import {
   AlertCircle,
   Clock,
   X,
+  History,
+  Play,
+  Square,
+  Settings,
 } from "lucide-react";
 import { AIService } from "../services/aiService";
 import { notificationService } from "../services/notificationService";
@@ -25,6 +29,7 @@ export default function FieldCard({
     startTime: field.scheduleSettings?.startTime || "21:00",
     endTime: field.scheduleSettings?.endTime || "23:00",
   });
+  const [isOperating, setIsOperating] = useState(false);
 
   // Monitor soil moisture when in auto mode
   useEffect(() => {
@@ -78,32 +83,42 @@ export default function FieldCard({
     field.id,
   ]);
 
-  // Enhanced pump toggle with auto mode notifications
-  const handlePumpToggle = (fieldId, status) => {
-    // Trigger notification when switching to auto mode
-    if (status === "auto") {
-      notificationService.addNotification({
-        type: "success",
-        title: "Auto Mode Activated",
-        message: `${field.name} is now in AI-assisted auto watering mode. You'll receive smart irrigation reminders based on soil conditions.`,
-        fieldId: field.id,
-      });
+  // Enhanced valve control with proper state management
+  const handleValveControl = async (action) => {
+    if (isOperating) return; // Prevent multiple simultaneous operations
 
-      // Immediate assessment when switching to auto mode
-      setTimeout(() => {
-        handleAutoModeAssessment();
-      }, 2000);
-    } else if (status === "on") {
+    setIsOperating(true);
+    try {
+      switch (action) {
+        case "turn_on":
+          await onPumpToggle(field.id, "on");
+          break;
+        case "turn_off":
+          await onPumpToggle(field.id, "off");
+          break;
+        case "set_auto":
+          await onPumpToggle(field.id, "auto");
+          // Immediate assessment when switching to auto mode
+          setTimeout(() => {
+            handleAutoModeAssessment();
+          }, 2000);
+          break;
+        default:
+          console.warn(`Unknown valve action: ${action}`);
+      }
+    } catch (error) {
+      console.error(`Failed to ${action}:`, error);
       notificationService.addNotification({
-        type: "info",
-        title: "Manual Watering Started",
-        message: `Manual watering activated for ${field.name}. Remember to monitor soil moisture levels.`,
+        type: "error",
+        title: "Valve Control Error",
+        message: `Failed to ${action.replace("_", " ")} for ${
+          field.name
+        }. Please try again.`,
         fieldId: field.id,
       });
+    } finally {
+      setIsOperating(false);
     }
-
-    // Call the original pump toggle function
-    onPumpToggle(fieldId, status);
   };
 
   // AI assessment for auto mode
@@ -145,6 +160,30 @@ export default function FieldCard({
     return "text-green-500";
   };
 
+  const getValveStatusColor = (status) => {
+    switch (status) {
+      case "on":
+        return "bg-green-100 text-green-800";
+      case "auto":
+        return "bg-blue-100 text-blue-800";
+      case "off":
+      default:
+        return "bg-gray-100 text-gray-800";
+    }
+  };
+
+  const getValveStatusIcon = (status) => {
+    switch (status) {
+      case "on":
+        return <Play className="h-3 w-3" />;
+      case "auto":
+        return <Zap className="h-3 w-3" />;
+      case "off":
+      default:
+        return <Square className="h-3 w-3" />;
+    }
+  };
+
   const formatTime = (timeString) => {
     const [hour, minute] = timeString.split(":");
     const hourNum = parseInt(hour);
@@ -152,6 +191,21 @@ export default function FieldCard({
     const displayHour =
       hourNum === 0 ? 12 : hourNum > 12 ? hourNum - 12 : hourNum;
     return `${displayHour}:${minute} ${ampm}`;
+  };
+
+  const formatLastWatered = (lastWatered) => {
+    const now = new Date();
+    const diffInHours = Math.floor((now - lastWatered) / (1000 * 60 * 60));
+
+    if (diffInHours < 1) {
+      const diffInMinutes = Math.floor((now - lastWatered) / (1000 * 60));
+      return `${diffInMinutes} minutes ago`;
+    } else if (diffInHours < 24) {
+      return `${diffInHours} hours ago`;
+    } else {
+      const diffInDays = Math.floor(diffInHours / 24);
+      return `${diffInDays} days ago`;
+    }
   };
 
   const handleGetRecommendation = async () => {
@@ -176,18 +230,6 @@ export default function FieldCard({
       enabled: true,
     });
 
-    // Notification for scheduled watering
-    notificationService.addNotification({
-      type: "success",
-      title: "Irrigation Schedule Set",
-      message: `${
-        field.name
-      } scheduled for automatic watering from ${formatTime(
-        tempSchedule.startTime
-      )} to ${formatTime(tempSchedule.endTime)}.`,
-      fieldId: field.id,
-    });
-
     setShowScheduleForm(false);
   };
 
@@ -195,14 +237,6 @@ export default function FieldCard({
     onScheduleUpdate(field.id, {
       ...field.scheduleSettings,
       enabled: false,
-    });
-
-    // Notification for cancelled schedule
-    notificationService.addNotification({
-      type: "info",
-      title: "Schedule Cancelled",
-      message: `Automatic watering schedule cancelled for ${field.name}. Switched to manual control.`,
-      fieldId: field.id,
     });
   };
 
@@ -226,12 +260,6 @@ export default function FieldCard({
                 isScheduleActive ? "text-green-500" : "text-blue-500"
               }`}
             />
-          )}
-          {field.pumpStatus === "auto" && (
-            <div className="flex items-center space-x-1 px-2 py-1 bg-blue-100 rounded-full">
-              <Zap className="h-3 w-3 text-blue-600" />
-              <span className="text-xs font-medium text-blue-600">AI Auto</span>
-            </div>
           )}
           <div
             className={`px-3 py-1 rounded-full text-xs font-medium ${getHealthColor(
@@ -278,36 +306,45 @@ export default function FieldCard({
         </div>
       </div>
 
-      {/* Auto Mode Status Banner */}
-      {field.pumpStatus === "auto" && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+      {/* Valve Status Banner */}
+      <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+        <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <Zap className="h-4 w-4 text-blue-600" />
-            <div>
-              <p className="text-sm font-medium text-blue-800">
-                🤖 AI Auto Mode Active
-              </p>
-              <p className="text-xs text-blue-600">
-                Smart notifications enabled for optimal irrigation timing
-              </p>
-            </div>
+            <Power className="h-4 w-4 text-gray-600" />
+            <span className="text-sm font-medium text-gray-700">
+              Valve Status
+            </span>
+          </div>
+          <div
+            className={`px-3 py-1 rounded-full text-xs font-medium flex items-center space-x-1 ${getValveStatusColor(
+              field.pumpStatus
+            )}`}
+          >
+            {getValveStatusIcon(field.pumpStatus)}
+            <span>{field.pumpStatus.toUpperCase()}</span>
+            {field.pumpStatus === "auto" && <span>🤖</span>}
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Last Watered */}
-      <div className="flex items-center space-x-2 mb-4 p-2 bg-gray-50 rounded-lg">
-        <Calendar className="h-4 w-4 text-gray-400" />
-        <div>
-          <p className="text-xs text-gray-500">Last watered</p>
-          <p className="text-sm text-gray-700">
-            {field.lastWatered.toLocaleDateString()} at{" "}
-            {field.lastWatered.toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </p>
+      {/* Enhanced Last Watered */}
+      <div className="flex items-center justify-between mb-4 p-3 bg-gray-50 rounded-lg">
+        <div className="flex items-center space-x-2">
+          <History className="h-4 w-4 text-gray-400" />
+          <div>
+            <p className="text-xs text-gray-500">Last watered</p>
+            <p className="text-sm text-gray-700">
+              {formatLastWatered(field.lastWatered)}
+            </p>
+          </div>
         </div>
+
+        {/* Watering logs count indicator */}
+        {field.waterLogs?.length > 0 && (
+          <div className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
+            {field.waterLogs.length} logs
+          </div>
+        )}
       </div>
 
       {/* Schedule Status (if enabled) */}
@@ -333,8 +370,8 @@ export default function FieldCard({
                   }`}
                 >
                   {isScheduleActive
-                    ? "Auto-watering active"
-                    : "Scheduled watering"}
+                    ? "🚿 Auto-watering active"
+                    : "⏰ Scheduled watering"}
                 </p>
                 <p
                   className={`text-xs ${
@@ -407,7 +444,7 @@ export default function FieldCard({
               onClick={handleScheduleSubmit}
               className="flex-1 bg-blue-500 text-white px-3 py-2 text-sm font-medium rounded-lg hover:bg-blue-600 transition-colors"
             >
-              Set Schedule
+              📅 Set Schedule & Create Log
             </button>
             <button
               onClick={() => setShowScheduleForm(false)}
@@ -419,33 +456,8 @@ export default function FieldCard({
         </div>
       )}
 
-      {/* Pump Control */}
+      {/* Enhanced Valve Control */}
       <div className="border-t border-gray-100 pt-4 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <Power
-              className={`h-4 w-4 ${
-                field.pumpStatus === "on" ? "text-green-500" : "text-gray-400"
-              }`}
-            />
-            <span className="text-sm font-medium text-gray-700">
-              Pump Status
-            </span>
-          </div>
-          <div
-            className={`px-2 py-1 rounded text-xs font-medium ${
-              field.pumpStatus === "on"
-                ? "bg-green-100 text-green-800"
-                : field.pumpStatus === "auto"
-                ? "bg-blue-100 text-blue-800"
-                : "bg-gray-100 text-gray-800"
-            }`}
-          >
-            {field.pumpStatus.toUpperCase()}
-            {field.pumpStatus === "auto" && " 🤖"}
-          </div>
-        </div>
-
         {/* Schedule Button (if no schedule set) */}
         {!field.scheduleSettings?.enabled && !showScheduleForm && (
           <div className="mb-3">
@@ -459,45 +471,77 @@ export default function FieldCard({
           </div>
         )}
 
-        <div className="flex space-x-2">
+        <div className="grid grid-cols-3 gap-2">
+          {/* Manual On/Off Button */}
           <button
             onClick={() =>
-              handlePumpToggle(
-                field.id,
-                field.pumpStatus === "on" ? "off" : "on"
+              handleValveControl(
+                field.pumpStatus === "on" ? "turn_off" : "turn_on"
               )
             }
-            disabled={isManualControlDisabled}
-            className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            disabled={isManualControlDisabled || isOperating}
+            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center space-x-1 ${
               field.pumpStatus === "on"
                 ? "bg-red-500 text-white hover:bg-red-600"
                 : "bg-green-500 text-white hover:bg-green-600"
             } ${
-              isManualControlDisabled ? "opacity-50 cursor-not-allowed" : ""
+              isManualControlDisabled || isOperating
+                ? "opacity-50 cursor-not-allowed"
+                : ""
             }`}
           >
-            {field.pumpStatus === "on" ? "Turn Off" : "Turn On"}
+            {field.pumpStatus === "on" ? (
+              <>
+                <Square className="h-3 w-3" />
+                <span>Stop</span>
+              </>
+            ) : (
+              <>
+                <Play className="h-3 w-3" />
+                <span>Start</span>
+              </>
+            )}
           </button>
 
+          {/* Auto Mode Button */}
           <button
-            onClick={() => handlePumpToggle(field.id, "auto")}
-            disabled={isManualControlDisabled}
-            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            onClick={() => handleValveControl("set_auto")}
+            disabled={isManualControlDisabled || isOperating}
+            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center space-x-1 ${
               field.pumpStatus === "auto"
                 ? "bg-blue-600 text-white"
                 : "bg-blue-500 text-white hover:bg-blue-600"
             } ${
-              isManualControlDisabled ? "opacity-50 cursor-not-allowed" : ""
+              isManualControlDisabled || isOperating
+                ? "opacity-50 cursor-not-allowed"
+                : ""
             }`}
-            title="AI Auto Mode - Smart irrigation reminders"
+            title="AI Auto Mode - Smart irrigation with watering logs"
           >
-            <Zap className="h-4 w-4" />
+            <Zap className="h-3 w-3" />
+            <span>Auto</span>
+          </button>
+
+          {/* Settings Button (Future feature) */}
+          <button
+            className="px-3 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors flex items-center justify-center space-x-1"
+            title="Valve settings (Coming soon)"
+            disabled
+          >
+            <Settings className="h-3 w-3" />
+            <span>Settings</span>
           </button>
         </div>
 
         {isManualControlDisabled && (
           <p className="text-xs text-gray-500 text-center mt-2">
             Manual control disabled during scheduled watering
+          </p>
+        )}
+
+        {isOperating && (
+          <p className="text-xs text-blue-500 text-center mt-2">
+            Processing valve operation...
           </p>
         )}
       </div>

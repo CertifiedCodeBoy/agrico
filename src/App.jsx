@@ -1,9 +1,6 @@
 import React, { useState } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Layout from "./components/Layout";
-import FieldCard from "./components/FieldCard";
-import AddFieldModal from "./components/AddFieldModal";
-import WeatherWidget from "./components/WeatherWidget";
 import Dashboard from "./pages/Dashboard";
 import Analytics from "./pages/Analytics";
 import CropAssistant from "./pages/CropAssistant";
